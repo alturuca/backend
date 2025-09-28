@@ -54,7 +54,7 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5137", # Esto asume que tu frontend corre aquí
+    "http://localhost:5173", # Esto asume que tu frontend corre aquí
 ]
 
 REST_FRAMEWORK = {
