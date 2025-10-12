@@ -9,10 +9,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Usuario
-from .serializers import UsuarioSerializer
+from .models import Usuario, Producto
+from .serializers import UsuarioSerializer, ProductoSerializer
 import json
 
+"""
+Esta es la vista de usuarios
+"""
 # Vista de login que genera tokens JWT válidos
 @method_decorator(csrf_exempt, name='dispatch')
 class LoginView(APIView):
@@ -61,3 +64,13 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.all()
     serializer_class = UsuarioSerializer
     permission_classes = [SoloAdminPuedeModificar]
+
+
+"""
+Esta es la vista de producto
+"""
+class ProductoViewSet(viewsets.ModelViewSet):
+    queryset = Producto.objects.all()
+    serializer_class = ProductoSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    lookup_field = 'sku'

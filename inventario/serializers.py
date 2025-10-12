@@ -1,6 +1,10 @@
 from rest_framework import serializers
-from .models import Usuario
+from .models import Usuario, Producto 
 
+
+"""
+Este es el serializador del Usuario
+"""
 class UsuarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Usuario
@@ -20,3 +24,12 @@ class UsuarioSerializer(serializers.ModelSerializer):
             instance.set_password(password)
         instance.save()
         return instance
+
+"""
+Este es el seralizador del prodcuto
+"""
+
+class ProductoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Producto
+        fields = '__all__'
