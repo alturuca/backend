@@ -1,10 +1,12 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import  LoginView, ProductoViewSet, UserDataView, UsuarioViewSet
+from .views import  LoginView, ProductoViewSet, UserDataView, UsuarioViewSet, FacturaViewSet
 
 router = DefaultRouter()
 router.register(r'usuarios', UsuarioViewSet)
 router.register(r'productos', ProductoViewSet)
+router.register(r'facturas', FacturaViewSet)
+
 
 urlpatterns = [
     # Autenticación

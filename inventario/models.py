@@ -60,3 +60,31 @@ class Producto(models.Model):
 
     def __str__(self):
         return f"{self.nombre} (SKU: {self.sku})"
+
+
+"""
+Modelo de la venta
+"""
+
+class Factura(models.Model):
+    numero = models.AutoField(primary_key=True)  # identificador único
+    cliente = models.CharField(max_length=100)
+    fecha = models.DateField(auto_now_add=True)
+
+    def total(self):
+        return sum(item.subtotal() for item in self.detalles.all())
+
+    def __str__(self):
+        return f"Factura #{self.numero} - {self.cliente}"
+
+class DetalleFactura(models.Model):
+    factura = models.ForeignKey(Factura, related_name='detalles', on_delete=models.CASCADE)
+    producto = models.CharField(max_length=100)
+    cantidad = models.PositiveIntegerField()
+    precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
+
+    def subtotal(self):
+        return self.cantidad * self.precio_unitario
+
+    def __str__(self):
+        return f"{self.producto} x {self.cantidad}"

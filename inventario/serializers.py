@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import Usuario, Producto 
+from .models import Usuario, Producto, Factura, DetalleFactura
+
 
 
 """
@@ -33,3 +34,27 @@ class ProductoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Producto
         fields = '__all__'
+
+"""
+Este es el serializador de venta
+"""
+
+class DetalleFacturaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DetalleFactura
+        exclude = ['factura']
+
+class FacturaSerializer(serializers.ModelSerializer):
+    detalles = DetalleFacturaSerializer(many=True)
+
+    class Meta:
+        model = Factura
+        fields = ['numero', 'cliente', 'fecha', 'detalles']
+        read_only_fields = ['fecha']
+
+    def create(self, validated_data):
+        detalles_data = validated_data.pop('detalles')
+        factura = Factura.objects.create(**validated_data)
+        for detalle in detalles_data:
+            DetalleFactura.objects.create(factura=factura, **detalle)
+        return factura
