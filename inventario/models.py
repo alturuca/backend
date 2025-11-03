@@ -81,10 +81,11 @@ class DetalleFactura(models.Model):
     factura = models.ForeignKey(Factura, related_name='detalles', on_delete=models.CASCADE)
     producto = models.CharField(max_length=100)
     cantidad = models.PositiveIntegerField()
-    precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
-
+    precio_unitario = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    
     def subtotal(self):
         return self.cantidad * self.precio_unitario
+
 
     def __str__(self):
         return f"{self.producto} x {self.cantidad}"
