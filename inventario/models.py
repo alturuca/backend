@@ -51,9 +51,9 @@ Esta es el area de producto
 class Producto(models.Model):
     sku = models.CharField(max_length=30, unique=True)  # Código único del producto
     nombre = models.CharField(max_length=100)
+    precio_compra = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    precio_venta = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     descripcion = models.TextField(blank=True)
-    precio_compra = models.DecimalField(max_digits=10, decimal_places=2)
-    precio_venta = models.DecimalField(max_digits=10, decimal_places=2)
     stock = models.PositiveIntegerField()
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
@@ -88,3 +88,22 @@ class DetalleFactura(models.Model):
 
     def __str__(self):
         return f"{self.producto} x {self.cantidad}"
+
+"""
+Modelo de la compra de producto
+"""
+
+class IngresoProducto(models.Model):
+    fecha = models.DateTimeField(auto_now_add=True)
+    proveedor = models.CharField(max_length=100)
+
+class DetalleIngresoProducto(models.Model):
+    ingreso = models.ForeignKey(IngresoProducto, related_name='detalles', on_delete=models.CASCADE)
+    producto = models.ForeignKey(Producto, to_field='sku', on_delete=models.CASCADE)
+    cantidad = models.PositiveIntegerField()
+    precio_compra = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    precio_venta = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+
+    
+    
+    

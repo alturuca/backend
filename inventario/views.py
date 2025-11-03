@@ -9,8 +9,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Usuario, Producto, Factura
-from .serializers import UsuarioSerializer, ProductoSerializer, FacturaSerializer
+from .models import Usuario, Producto, Factura, IngresoProducto
+from .serializers import UsuarioSerializer, ProductoSerializer, FacturaSerializer, IngresoProductoSerializer
 import json
 
 """
@@ -83,4 +83,13 @@ Esta es la vista de venta
 class FacturaViewSet(viewsets.ModelViewSet):
     queryset = Factura.objects.all()
     serializer_class = FacturaSerializer
+    permission_classes = [IsAuthenticated]
+
+"""
+Esta es la vista de venta ingreso de producto
+"""
+
+class IngresoProductoViewSet(viewsets.ModelViewSet):
+    queryset = IngresoProducto.objects.all()
+    serializer_class = IngresoProductoSerializer
     permission_classes = [IsAuthenticated]
