@@ -7,11 +7,14 @@ from django.contrib.auth import authenticate
 from rest_framework import viewsets, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Usuario, Producto, Factura, IngresoProducto
+from .models import Usuario, Producto, Factura, IngresoProducto, DetalleFactura
 from .serializers import UsuarioSerializer, ProductoSerializer, FacturaSerializer, IngresoProductoSerializer
 import json
+from django.db.models import Sum, F
+from django.utils import timezone
+
 
 """
 Esta es la vista de usuarios
@@ -20,7 +23,7 @@ Esta es la vista de usuarios
 @method_decorator(csrf_exempt, name='dispatch')
 class LoginView(APIView):
     def post(self, request, *args, **kwargs):
-        data = json.loads(request.body)
+        data = request.data
         username = data.get('username')
         password = data.get('password')
 
@@ -33,9 +36,9 @@ class LoginView(APIView):
             return JsonResponse({
                 'message': 'Inicio de sesión exitoso',
                 'username': user.username,
-                'rol': user.rol,
-                'access_token': access_token,
-                'refresh_token': refresh_token
+                'rol': getattr(user, 'rol', 'vendedor'),
+                'access_token': str(refresh.access_token),
+                'refresh_token': str(refresh)
             })
         else:
             return JsonResponse({'error': 'Credenciales inválidas'}, status=401)
@@ -93,3 +96,44 @@ class IngresoProductoViewSet(viewsets.ModelViewSet):
     queryset = IngresoProducto.objects.all()
     serializer_class = IngresoProductoSerializer
     permission_classes = [IsAuthenticated]
+
+
+class ReporteVentasView(APIView):
+    """
+    Endpoint para obtener el reporte de ventas.
+    Retorna ventas del día y del mes actual.
+    Solo accesible por usuarios admin (is_staff=True).
+    """
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        # Fecha actual
+        hoy = timezone.localdate()
+        mes_actual = hoy.month
+        anio_actual = hoy.year
+
+        # Ventas del día
+        ventas_dia = (
+            DetalleFactura.objects
+            .filter(factura__fecha=hoy)
+            .aggregate(total=Sum(F('cantidad') * F('precio_unitario')))
+            .get('total') or 0
+        )
+
+        # Ventas del mes
+        ventas_mes = (
+            DetalleFactura.objects
+            .filter(
+                factura__fecha__year=anio_actual,
+                factura__fecha__month=mes_actual
+            )
+            .aggregate(total=Sum(F('cantidad') * F('precio_unitario')))
+            .get('total') or 0
+        )
+
+        # Retorno en formato JSON
+        return Response({
+            "ventas_dia": float(ventas_dia),
+            "ventas_mes": float(ventas_mes),
+            "moneda": "COP"
+        })

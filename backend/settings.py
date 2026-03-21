@@ -135,7 +135,7 @@ AUTH_USER_MODEL = 'inventario.Usuario'
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # Origen donde se ejecuta el servidor de desarrollo de React
-    
+    "http://127.0.0.1:5173",
 ]
 
 REST_FRAMEWORK = {
