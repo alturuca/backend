@@ -100,19 +100,38 @@ class IngresoProductoViewSet(viewsets.ModelViewSet):
 
 class ReporteVentasView(APIView):
     """
-    Endpoint para obtener el reporte de ventas.
-    Retorna ventas del día y del mes actual.
-    Solo accesible por usuarios admin (is_staff=True).
+    Endpoint para obtener reportes de ventas.
+    Permite filtrar por rango de fechas mediante parámetros en la URL.
+    Ejemplo: /api/v1/reporte-ventas/?fecha_inicio=2026-03-01&fecha_fin=2026-03-21
     """
     permission_classes = [IsAdminUser]
 
     def get(self, request):
-        # Fecha actual
+        # 1. Obtener parámetros de filtrado por fechas
+        fecha_inicio = request.query_params.get('fecha_inicio')
+        fecha_fin = request.query_params.get('fecha_fin')
+
+        # Variables para la respuesta
         hoy = timezone.localdate()
         mes_actual = hoy.month
         anio_actual = hoy.year
+        
+        datos_respuesta = {
+            "moneda": "COP"
+        }
 
-        # Ventas del día
+        # 2. Lógica de filtrado por RANGO (si existen fechas en la URL)
+        if fecha_inicio and fecha_fin:
+            ventas_rango = (
+                DetalleFactura.objects
+                .filter(factura__fecha__range=[fecha_inicio, fecha_fin])
+                .aggregate(total=Sum(F('cantidad') * F('precio_unitario')))
+                .get('total') or 0
+            )
+            datos_respuesta["total_rango"] = float(ventas_rango)
+            datos_respuesta["periodo"] = f"{fecha_inicio} a {fecha_fin}"
+
+        # 3. Lógica por DEFECTO (Ventas del día y del mes)
         ventas_dia = (
             DetalleFactura.objects
             .filter(factura__fecha=hoy)
@@ -120,7 +139,6 @@ class ReporteVentasView(APIView):
             .get('total') or 0
         )
 
-        # Ventas del mes
         ventas_mes = (
             DetalleFactura.objects
             .filter(
@@ -131,9 +149,8 @@ class ReporteVentasView(APIView):
             .get('total') or 0
         )
 
-        # Retorno en formato JSON
-        return Response({
-            "ventas_dia": float(ventas_dia),
-            "ventas_mes": float(ventas_mes),
-            "moneda": "COP"
-        })
+        # Añadimos los datos estándar a la respuesta
+        datos_respuesta["ventas_dia"] = float(ventas_dia)
+        datos_respuesta["ventas_mes"] = float(ventas_mes)
+
+        return Response(datos_respuesta)
