@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Usuario, Producto, Factura, DetalleFactura, IngresoProducto, DetalleIngresoProducto
+from inventario.models import Usuario, Producto, Factura, DetalleFactura, IngresoProducto, DetalleIngresoProducto
 from decimal import Decimal
 
 
