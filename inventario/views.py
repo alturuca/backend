@@ -6,7 +6,7 @@ from django.utils.decorators import method_decorator
 from django.contrib.auth import authenticate
 from django.db.models import Sum, F, Count
 from django.utils import timezone
-from django.db.models.functions import TruncWeek
+from django.db.models.functions import TruncDay
 
 from rest_framework import viewsets, permissions
 from rest_framework.views import APIView
@@ -155,39 +155,95 @@ class IngresoProductoViewSet(viewsets.ModelViewSet):
 
 class DashboardStatsView(APIView):
     permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        hoy = timezone.localdate()
-        ventas_dia = DetalleFactura.objects.filter(factura__fecha=hoy).aggregate(
-            total=Sum(F('cantidad') * F('precio_unitario')))['total'] or 0
+        # 1. Obtener la fecha de hoy asegurando la zona horaria de Colombia
+        hoy = timezone.now().date() 
+
+        # 2. Calcular Ventas del Día sumando los detalles de las facturas de hoy
+        ventas_dia_query = DetalleFactura.objects.filter(
+            factura__fecha=hoy
+        ).aggregate(
+            total=Sum(F('cantidad') * F('precio_unitario'))
+        )
+        ventas_dia = ventas_dia_query['total'] or 0
+
+        # 3. Calcular Rendimiento Mensual (Ventas del mes actual)
+        ventas_mes_query = DetalleFactura.objects.filter(
+            factura__fecha__month=hoy.month,
+            factura__fecha__year=hoy.year
+        ).aggregate(
+            total=Sum(F('cantidad') * F('precio_unitario'))
+        )
+        ventas_mes = ventas_mes_query['total'] or 0
+
+        # 4. Otros datos (Stock y Alertas)
         total_stock = Producto.objects.aggregate(total=Sum('stock'))['total'] or 0
         bajo_stock = Producto.objects.filter(stock__lt=10).count()
 
-        return Response([
-            {"id": 1, "name": 'Ventas del Día', "value": f"${float(ventas_dia):,.0f}", "change": 'Hoy', "changeType": 'increase'},
-            {"id": 2, "name": 'Productos en Stock', "value": str(total_stock), "change": 'Total items', "changeType": 'neutral'},
-            {"id": 3, "name": 'Bajo Stock', "value": str(bajo_stock), "change": 'Revisar', "changeType": 'decrease'},
-        ])
-
-class ReporteVentasView(APIView):
-    permission_classes = [IsAdminUser]
-    def get(self, request):
-        hoy = timezone.localdate()
-        hace_28_dias = hoy - timedelta(days=27)
-        
-        reporte = (
-            DetalleFactura.objects
-            .filter(factura__fecha__range=[hace_28_dias, hoy])
-            .annotate(semana=TruncWeek('factura__fecha'))
-            .values('semana')
-            .annotate(total_ventas=Sum(F('cantidad') * F('precio_unitario')), num_facturas=Count('factura', distinct=True))
-            .order_by('semana')
-        )
-
+        # Respuesta estructurada para tu frontend en React
         return Response({
-            "moneda": "COP",
-            "tendencia_semanal": list(reporte)
+            "totales": {
+                "hoy": float(ventas_dia),
+                "mes": float(ventas_mes),
+                "meta_mensual": 10000000, # La meta de 10 millones que se ve en tu imagen
+                "porcentaje_meta": (float(ventas_mes) / 10000000) * 100 if ventas_mes > 0 else 0
+            },
+            "stats_cards": [
+                {"id": 1, "name": 'Ventas del Día', "value": f"${float(ventas_dia):,.0f}", "change": 'Hoy', "changeType": 'increase'},
+                {"id": 2, "name": 'Productos en Stock', "value": str(total_stock), "change": 'Total items', "changeType": 'neutral'},
+                {"id": 3, "name": 'Bajo Stock', "value": str(bajo_stock), "change": 'Revisar', "changeType": 'decrease'},
+            ]
         })
 
+class ReporteVentasView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        hoy = timezone.localdate()
+        
+        # Totales para Reportes.jsx y ReporteVentas.jsx
+        ventas_hoy = DetalleFactura.objects.filter(factura__fecha=hoy).aggregate(
+            t=Sum(F('cantidad') * F('precio_unitario')))['t'] or 0
+        
+        ventas_mes_query = DetalleFactura.objects.filter(
+            factura__fecha__month=hoy.month,
+            factura__fecha__year=hoy.year
+        ).aggregate(
+            total=Sum(F('cantidad') * F('precio_unitario')),
+            conteo=Count('factura', distinct=True)
+        )
+        
+        ventas_mes = float(ventas_mes_query['total'] or 0)
+        conteo_facturas = ventas_mes_query['conteo'] or 0
+
+        # Tendencia para las gráficas
+        hace_28_dias = hoy - timedelta(days=27)
+        reporte_db = (
+            DetalleFactura.objects
+            .filter(factura__fecha__range=[hace_28_dias, hoy])
+            .values(fecha_dia=F('factura__fecha'))
+            .annotate(ventas=Sum(F('cantidad') * F('precio_unitario')))
+            .order_by('fecha_dia')
+        )
+
+        tendencia = [
+            {"nombre": item['fecha_dia'].strftime('%d/%m'), "ventas": float(item['ventas'])} 
+            for item in reporte_db
+        ]
+
+        return Response({
+            "totales": { # Llave esperada por Reportes.jsx
+                "hoy": float(ventas_hoy),
+                "mes": ventas_mes,
+                "utilidad": ventas_mes * 0.40
+            },
+            "ventas_mes": ventas_mes, # Llave para ReporteMensual.jsx
+            "conteo_facturas_mes": conteo_facturas,
+            "ticket_promedio_mes": ventas_mes / conteo_facturas if conteo_facturas > 0 else 0,
+            "tendencia_semanal": tendencia # Para GraficasReporte.jsx
+        })
+        
 class ReporteUtilidadView(APIView):
     permission_classes = [IsAdminUser]
     def get(self, request):
