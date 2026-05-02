@@ -1,40 +1,41 @@
-# inventario/views.py
-
-from django.http import JsonResponse
+import json
+from datetime import timedelta
+from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.contrib.auth import authenticate
+from django.db.models import Sum, F, Count
+from django.utils import timezone
+from django.db.models.functions import TruncWeek
+
 from rest_framework import viewsets, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.decorators import action
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Usuario, Producto, Factura, IngresoProducto, DetalleFactura
-from .serializers import UsuarioSerializer, ProductoSerializer, FacturaSerializer, IngresoProductoSerializer
-import json
-from django.db.models import Sum, F, Count
-from django.utils import timezone
-from django.db.models.functions import TruncDay, TruncWeek
-from datetime import timedelta
-from django.utils import timezone
 
-"""
-Esta es la vista de usuarios
-"""
-# Vista de login que genera tokens JWT válidos
+# Herramientas para PDF (ReportLab)
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+
+# Imports relativos del proyecto StocklyX
+from inventario.models import Usuario, Producto, Factura, IngresoProducto, DetalleFactura
+from inventario.serializers import UsuarioSerializer, ProductoSerializer, FacturaSerializer, IngresoProductoSerializer
+
+# --- AUTENTICACIÓN ---
+
 @method_decorator(csrf_exempt, name='dispatch')
 class LoginView(APIView):
     def post(self, request, *args, **kwargs):
         data = request.data
         username = data.get('username')
         password = data.get('password')
-
         user = authenticate(request, username=username, password=password)
+        
         if user is not None:
             refresh = RefreshToken.for_user(user)
-            access_token = str(refresh.access_token)
-            refresh_token = str(refresh)
-
             return JsonResponse({
                 'message': 'Inicio de sesión exitoso',
                 'username': user.username,
@@ -42,13 +43,10 @@ class LoginView(APIView):
                 'access_token': str(refresh.access_token),
                 'refresh_token': str(refresh)
             })
-        else:
-            return JsonResponse({'error': 'Credenciales inválidas'}, status=401)
+        return JsonResponse({'error': 'Credenciales inválidas'}, status=401)
 
-# Vista protegida que devuelve los datos del usuario autenticado
 class UserDataView(APIView):
     permission_classes = [IsAuthenticated]
-
     def get(self, request):
         user = request.user
         return Response({
@@ -57,217 +55,151 @@ class UserDataView(APIView):
             'rol': getattr(user, 'rol', 'vendedor'),
         })
 
-# Permisos personalizados: solo administradores pueden modificar
-class SoloAdminPuedeModificar(permissions.BasePermission):
-    def has_permission(self, request, view):
-        if request.method in permissions.SAFE_METHODS:
-            return request.user and request.user.is_authenticated
-        return request.user and request.user.is_authenticated and request.user.is_staff
+# --- VIEWSETS (CRUD) ---
 
-# ViewSet para usuarios
 class UsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.all()
     serializer_class = UsuarioSerializer
-    permission_classes = [SoloAdminPuedeModificar]
+    permission_classes = [IsAdminUser]
 
-
-"""
-Esta es la vista de producto
-"""
 class ProductoViewSet(viewsets.ModelViewSet):
     queryset = Producto.objects.all()
     serializer_class = ProductoSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     lookup_field = 'sku'
 
-
-"""
-Esta es la vista de venta
-"""
-
 class FacturaViewSet(viewsets.ModelViewSet):
-    queryset = Factura.objects.all()
+    queryset = Factura.objects.all().order_by('-fecha')
     serializer_class = FacturaSerializer
     permission_classes = [IsAuthenticated]
 
-"""
-Esta es la vista de venta ingreso de producto
-"""
+    def get_queryset(self):
+        queryset = self.queryset
+        inicio = self.request.query_params.get('inicio')
+        fin = self.request.query_params.get('fin')
+        if inicio and fin:
+            queryset = queryset.filter(fecha__range=[inicio, fin])
+        return queryset
 
+    @action(detail=True, methods=['get'])
+    def exportar_pdf(self, request, pk=None):
+        """Genera factura en PDF con datos protegidos."""
+        try:
+            factura = self.get_object()
+            detalles = DetalleFactura.objects.filter(factura=factura)
+            
+            response = HttpResponse(content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="Factura_{factura.pk}.pdf"'
+
+            p = canvas.Canvas(response, pagesize=letter)
+            width, height = letter
+
+            # Cabecera
+            p.setFillColorRGB(0.12, 0.12, 0.12)
+            p.rect(40, 740, 520, 40, fill=1)
+            p.setFillColor(colors.white)
+            p.setFont("Helvetica-Bold", 18)
+            p.drawCentredString(width / 2, 755, "STOCKLYX - COMPROBANTE DE VENTA")
+
+            p.setFillColor(colors.black)
+            p.setFont("Helvetica-Bold", 11)
+            p.drawString(50, 715, "Popayán, Cauca - Colombia")
+            
+            p.rect(380, 685, 180, 50)
+            p.setFont("Helvetica-Bold", 12)
+            p.drawString(390, 720, f"FACTURA N°: {factura.pk}")
+            
+            # Tabla de Items
+            y = 630
+            p.setFont("Helvetica-Bold", 10)
+            p.drawString(50, y, "DESCRIPCIÓN")
+            p.drawString(300, y, "CANT.")
+            p.drawRightString(550, y, "SUBTOTAL")
+            
+            y -= 25
+            total_acumulado = 0
+            p.setFont("Helvetica", 10)
+
+            for item in detalles:
+                precio = item.precio_unitario or 0
+                cantidad = item.cantidad or 0
+                subtotal = precio * cantidad
+                total_acumulado += subtotal
+                nombre = item.producto.nombre[:35] if item.producto else "Producto s/n"
+                
+                p.drawString(50, y, f"{nombre}")
+                p.drawString(310, y, f"{cantidad}")
+                p.drawRightString(550, y, f"${subtotal:,.0f}")
+                y -= 20
+
+            # Total
+            p.setFont("Helvetica-Bold", 12)
+            p.setFillColor(colors.darkgreen)
+            p.drawRightString(550, y - 15, f"TOTAL: ${total_acumulado:,.0f} COP")
+
+            p.showPage()
+            p.save()
+            return response
+        except Exception as e:
+            print(f"Error en PDF: {str(e)}")
+            return JsonResponse({"error": "Error al generar PDF"}, status=500)
+
+# --- CLASE QUE SOLUCIONA EL IMPORT ERROR ---
 class IngresoProductoViewSet(viewsets.ModelViewSet):
+    """ViewSet para gestionar la entrada de mercancía (StocklyX)."""
     queryset = IngresoProducto.objects.all()
     serializer_class = IngresoProductoSerializer
     permission_classes = [IsAuthenticated]
 
+# --- DASHBOARD Y REPORTES ---
+
+class DashboardStatsView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        hoy = timezone.localdate()
+        ventas_dia = DetalleFactura.objects.filter(factura__fecha=hoy).aggregate(
+            total=Sum(F('cantidad') * F('precio_unitario')))['total'] or 0
+        total_stock = Producto.objects.aggregate(total=Sum('stock'))['total'] or 0
+        bajo_stock = Producto.objects.filter(stock__lt=10).count()
+
+        return Response([
+            {"id": 1, "name": 'Ventas del Día', "value": f"${float(ventas_dia):,.0f}", "change": 'Hoy', "changeType": 'increase'},
+            {"id": 2, "name": 'Productos en Stock', "value": str(total_stock), "change": 'Total items', "changeType": 'neutral'},
+            {"id": 3, "name": 'Bajo Stock', "value": str(bajo_stock), "change": 'Revisar', "changeType": 'decrease'},
+        ])
 
 class ReporteVentasView(APIView):
     permission_classes = [IsAdminUser]
-
     def get(self, request):
         hoy = timezone.localdate()
-        # Calculamos 4 semanas atrás (28 días)
         hace_28_dias = hoy - timedelta(days=27)
         
-        # 1. OBTENER DATOS AGRUPADOS POR SEMANA
-        reporte_por_semanas = (
+        reporte = (
             DetalleFactura.objects
             .filter(factura__fecha__range=[hace_28_dias, hoy])
             .annotate(semana=TruncWeek('factura__fecha'))
             .values('semana')
-            .annotate(
-                total_ventas=Sum(F('cantidad') * F('precio_unitario')),
-                num_facturas=Count('factura', distinct=True)
-            )
+            .annotate(total_ventas=Sum(F('cantidad') * F('precio_unitario')), num_facturas=Count('factura', distinct=True))
             .order_by('semana')
         )
 
-        # 2. FORMATEAR CON NOMBRES ESPECÍFICOS
-        registros = list(reporte_por_semanas)
-        tendencia_semanal = []
-        # Nombres que queremos mostrar en el frontend
-        nombres_labels = ["Sem 1", "Sem 2", "Semana Pasada", "Esta Semana"]
-        
-        # Llenamos las 4 posiciones (de la más antigua a la más reciente)
-        for i in range(4):
-            # Buscamos el registro correspondiente en la lista (de atrás hacia adelante)
-            # El índice -1 es "Esta Semana", -2 es "Semana Pasada", etc.
-            idx_busqueda = len(registros) - (4 - i)
-            
-            nombre_final = nombres_labels[i]
-            
-            if idx_busqueda >= 0:
-                item = registros[idx_busqueda]
-                ventas = float(item['total_ventas'] or 0)
-                facturas = item['num_facturas'] or 0
-                
-                tendencia_semanal.append({
-                    "nombre": nombre_final,
-                    "ventas": ventas,
-                    "ticket_promedio": ventas / facturas if facturas > 0 else 0
-                })
-            else:
-                # Si no hay ventas registradas para esa semana, enviamos 0
-                tendencia_semanal.append({
-                    "nombre": nombre_final,
-                    "ventas": 0,
-                    "ticket_promedio": 0
-                })
-
-        # 3. TOTALES GENERALES
-        # (Se mantiene igual para no romper tus tarjetas de arriba)
-        ventas_mes_data = DetalleFactura.objects.filter(
-            factura__fecha__year=hoy.year,
-            factura__fecha__month=hoy.month
-        ).aggregate(
-            total=Sum(F('cantidad') * F('precio_unitario')),
-            facturas=Count('factura', distinct=True)
-        )
-
-        total_ventas_mes = float(ventas_mes_data['total'] or 0)
-        total_facturas_mes = ventas_mes_data['facturas'] or 0
-
-        ventas_dia = DetalleFactura.objects.filter(
-            factura__fecha=hoy
-        ).aggregate(total=Sum(F('cantidad') * F('precio_unitario')))['total'] or 0
-
         return Response({
             "moneda": "COP",
-            "ventas_dia": float(ventas_dia),
-            "ventas_mes": total_ventas_mes,
-            "utilidad_mes": total_ventas_mes * 0.40,
-            "ticket_promedio_mes": total_ventas_mes / total_facturas_mes if total_facturas_mes > 0 else 0,
-            "conteo_facturas_mes": total_facturas_mes,
-            "tendencia_semanal": tendencia_semanal
+            "tendencia_semanal": list(reporte)
         })
-    
-class DashboardStatsView(APIView):
-    
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        hoy = timezone.localdate()
-        
-        # 1. Ventas del Día (ID: 1)
-        # Sumamos el subtotal (cantidad * precio) de todos los detalles de facturas de hoy
-        ventas_dia = (
-            DetalleFactura.objects
-            .filter(factura__fecha=hoy)
-            .aggregate(total=Sum(F('cantidad') * F('precio_unitario')))
-            .get('total') or 0
-        )
-        
-        # 2. Productos en Stock (ID: 2)
-        # Sumamos la columna 'stock' de todos los productos en la base de datos
-        total_stock = Producto.objects.aggregate(total=Sum('stock'))['total'] or 0
-        
-        # 4. Bajo Stock (ID: 4)
-        # Contamos cuántos productos tienen menos de 10 unidades
-        conteo_bajo_stock = Producto.objects.filter(stock__lt=10).count()
-
-        # Formateamos la respuesta para que React la reciba exactamente como la necesita
-        data = [
-            { 
-                "id": 1, 
-                "name": 'Ventas del Día', 
-                "value": f"${float(ventas_dia):,.0f}", # Formato $1.240.000
-                "change": 'Hoy', 
-                "changeType": 'increase' 
-            },
-            { 
-                "id": 2, 
-                "name": 'Productos en Stock', 
-                "value": str(total_stock), 
-                "change": 'Total items', 
-                "changeType": 'neutral' 
-            },
-            { 
-                "id": 3, 
-                "name": 'Bajo Stock', 
-                "value": str(conteo_bajo_stock), 
-                "change": 'Revisar', 
-                "changeType": 'decrease' 
-            },
-        ]
-        
-        return Response(data)
 
 class ReporteUtilidadView(APIView):
+    permission_classes = [IsAdminUser]
     def get(self, request):
         hoy = timezone.localdate()
-        inicio_mes = hoy.replace(day=1)
-        inicio_semana = hoy - timedelta(days=hoy.weekday()) 
-
         def calcular_datos(queryset):
-            # 1. Agregamos el total de dinero y el conteo de facturas únicas
-            # Usamos distinct=True porque un DetalleFactura pertenece a una Factura;
-            # si una factura tiene 3 productos, Count('factura') daría 3, pero distinct=True da 1.
-            resultado = queryset.aggregate(
-                total_ventas=Sum(F('cantidad') * F('precio_unitario')),
-                total_facturas=Count('factura', distinct=True)
-            )
-            
-            ventas = resultado['total_ventas'] or 0
-            num_facturas = resultado['total_facturas'] or 0
-            
-            # 2. Cálculo del Ticket Promedio
-            # Evitamos el error de división por cero si no hay ventas aún
-            ticket_promedio = ventas / num_facturas if num_facturas > 0 else 0
-            
-            return {
-                "ventas": float(ventas),
-                "utilidad": float(ventas) * 0.40,
-                "ticket_promedio": float(ticket_promedio), # ✅ Dato real
-                "conteo_facturas": num_facturas           # ✅ Útil para auditoría
-            }
-
-        # Consultas filtradas (ya corregidas para DateField)
-        datos_diarios = DetalleFactura.objects.filter(factura__fecha=hoy)
-        datos_semanales = DetalleFactura.objects.filter(factura__fecha__range=[inicio_semana, hoy])
-        datos_mensuales = DetalleFactura.objects.filter(factura__fecha__range=[inicio_mes, hoy])
+            res = queryset.aggregate(total=Sum(F('cantidad') * F('precio_unitario')), conteo=Count('factura', distinct=True))
+            v = res['total'] or 0
+            c = res['conteo'] or 0
+            return {"ventas": float(v), "utilidad": float(v) * 0.40, "ticket_promedio": float(v/c) if c > 0 else 0}
 
         return Response({
-            "diario": calcular_datos(datos_diarios),
-            "semanal": calcular_datos(datos_semanales),
-            "mensual": calcular_datos(datos_mensuales),
+            "diario": calcular_datos(DetalleFactura.objects.filter(factura__fecha=hoy)),
+            "mensual": calcular_datos(DetalleFactura.objects.filter(factura__fecha__month=hoy.month)),
             "moneda": "COP"
         })

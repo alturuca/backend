@@ -47,17 +47,22 @@ class DetalleFacturaSerializer(serializers.ModelSerializer):
 
 class FacturaSerializer(serializers.ModelSerializer):
     detalles = DetalleFacturaSerializer(many=True)
+    total = serializers.ReadOnlyField()
 
     class Meta:
         model = Factura
-        fields = ['numero', 'cliente', 'fecha', 'detalles']
-        read_only_fields = ['fecha']
+        fields = ['numero', 'cliente', 'fecha', 'detalles', 'total']
+        read_only_fields = ['fecha', 'total']
 
     def create(self, validated_data):
         detalles_data = validated_data.pop('detalles')
         factura = Factura.objects.create(**validated_data)
         for detalle in detalles_data:
-            DetalleFactura.objects.create(factura=factura, **detalle)
+            item = DetalleFactura.objects.create(factura=factura, **detalle)
+    # Restar stock del producto vendido
+            producto = item.producto
+            producto.stock -= item.cantidad
+            producto.save()
         return factura
 
 

@@ -71,18 +71,20 @@ class Factura(models.Model):
     cliente = models.CharField(max_length=100)
     fecha = models.DateField(auto_now_add=True)
 
+    @property
     def total(self):
-        return sum(item.subtotal() for item in self.detalles.all())
+        return sum(item.subtotal for item in self.detalles.all())
 
     def __str__(self):
         return f"Factura #{self.numero} - {self.cliente}"
 
 class DetalleFactura(models.Model):
     factura = models.ForeignKey(Factura, related_name='detalles', on_delete=models.CASCADE)
-    producto = models.CharField(max_length=100)
+    producto = models.ForeignKey(Producto, to_field='sku', on_delete=models.PROTECT)
     cantidad = models.PositiveIntegerField()
     precio_unitario = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     
+    @property
     def subtotal(self):
         return self.cantidad * self.precio_unitario
 
@@ -97,6 +99,7 @@ Modelo de la compra de producto
 class IngresoProducto(models.Model):
     fecha = models.DateTimeField(auto_now_add=True)
     proveedor = models.CharField(max_length=100)
+    usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True)
 
 class DetalleIngresoProducto(models.Model):
     ingreso = models.ForeignKey(IngresoProducto, related_name='detalles', on_delete=models.CASCADE)
