@@ -11,7 +11,8 @@ class UsuarioSerializer(serializers.ModelSerializer):
         model = Usuario
         fields = ['id', 'username', 'first_name', 'last_name', 'email', 'rol', 'password']
         extra_kwargs = {
-            'password': {'write_only': True}
+            'password': {'write_only': True},
+            'last_name': {'required': False, 'allow_blank': True}
         }
 
     def create(self, validated_data):

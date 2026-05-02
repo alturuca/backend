@@ -82,8 +82,8 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'negocio_db',     # El nombre de la DB que creaste en phpMyAdmin
-        'USER': 'admin_grado',           # Tu usuario de MySQL/phpMyAdmin
-        'PASSWORD': 'Password123*',# Tu contraseña de MySQL
+        'USER': 'root',           # Tu usuario de MySQL/phpMyAdmin
+        'PASSWORD': '',# Tu contraseña de MySQL
         'HOST': 'localhost',      # O la IP de tu servidor
         'PORT': '3306',
     }

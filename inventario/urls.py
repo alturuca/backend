@@ -9,7 +9,7 @@ from .views import (
     FacturaViewSet, 
     IngresoProductoViewSet,
     ReporteVentasView,
-    ReporteUtilidadView,
+    ReporteUtilidadView,    
 )
 
 router = DefaultRouter()
