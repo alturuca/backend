@@ -83,7 +83,6 @@ class FacturaViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def exportar_pdf(self, request, pk=None):
-        """Genera factura en PDF con datos protegidos."""
         try:
             factura = self.get_object()
             detalles = DetalleFactura.objects.filter(factura=factura)
@@ -144,9 +143,7 @@ class FacturaViewSet(viewsets.ModelViewSet):
             print(f"Error en PDF: {str(e)}")
             return JsonResponse({"error": "Error al generar PDF"}, status=500)
 
-# --- CLASE QUE SOLUCIONA EL IMPORT ERROR ---
 class IngresoProductoViewSet(viewsets.ModelViewSet):
-    """ViewSet para gestionar la entrada de mercancía (StocklyX)."""
     queryset = IngresoProducto.objects.all()
     serializer_class = IngresoProductoSerializer
     permission_classes = [IsAuthenticated]
@@ -157,56 +154,48 @@ class DashboardStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # 1. Obtener la fecha de hoy asegurando la zona horaria de Colombia
-        hoy = timezone.now().date() 
+        hoy = timezone.localdate()
 
-        # 2. Calcular Ventas del Día sumando los detalles de las facturas de hoy
-        ventas_dia_query = DetalleFactura.objects.filter(
-            factura__fecha=hoy
-        ).aggregate(
-            total=Sum(F('cantidad') * F('precio_unitario'))
-        )
-        ventas_dia = ventas_dia_query['total'] or 0
+        ventas_hoy = DetalleFactura.objects.filter(factura__fecha=hoy).aggregate(
+            total=Sum(F('cantidad') * F('precio_unitario')))['total'] or 0
 
-        # 3. Calcular Rendimiento Mensual (Ventas del mes actual)
-        ventas_mes_query = DetalleFactura.objects.filter(
+        ventas_mes = DetalleFactura.objects.filter(
             factura__fecha__month=hoy.month,
             factura__fecha__year=hoy.year
-        ).aggregate(
-            total=Sum(F('cantidad') * F('precio_unitario'))
-        )
-        ventas_mes = ventas_mes_query['total'] or 0
+        ).aggregate(total=Sum(F('cantidad') * F('precio_unitario')))['total'] or 0
 
-        # 4. Otros datos (Stock y Alertas)
         total_stock = Producto.objects.aggregate(total=Sum('stock'))['total'] or 0
         bajo_stock = Producto.objects.filter(stock__lt=10).count()
 
-        # Respuesta estructurada para tu frontend en React
         return Response({
             "totales": {
-                "hoy": float(ventas_dia),
+                "hoy": float(ventas_hoy),
                 "mes": float(ventas_mes),
-                "meta_mensual": 10000000, # La meta de 10 millones que se ve en tu imagen
+                "utilidad": float(ventas_mes) * 0.40,
+                "meta_mensual": 10000000,
                 "porcentaje_meta": (float(ventas_mes) / 10000000) * 100 if ventas_mes > 0 else 0
             },
             "stats_cards": [
-                {"id": 1, "name": 'Ventas del Día', "value": f"${float(ventas_dia):,.0f}", "change": 'Hoy', "changeType": 'increase'},
-                {"id": 2, "name": 'Productos en Stock', "value": str(total_stock), "change": 'Total items', "changeType": 'neutral'},
-                {"id": 3, "name": 'Bajo Stock', "value": str(bajo_stock), "change": 'Revisar', "changeType": 'decrease'},
+                {"id": 1, "name": 'Ventas del Día', "value": f"${float(ventas_hoy):,.0f}"},
+                {"id": 2, "name": 'Productos en Stock', "value": str(total_stock)},
+                {"id": 3, "name": 'Bajo Stock', "value": str(bajo_stock)},
             ]
         })
 
 class ReporteVentasView(APIView):
+    """
+    Vista unificada para Reportes.jsx, ReporteVentas.jsx y ReporteMensual.jsx
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         hoy = timezone.localdate()
         
-        # Totales para Reportes.jsx y ReporteVentas.jsx
+        # Totales rápidos
         ventas_hoy = DetalleFactura.objects.filter(factura__fecha=hoy).aggregate(
             t=Sum(F('cantidad') * F('precio_unitario')))['t'] or 0
         
-        ventas_mes_query = DetalleFactura.objects.filter(
+        v_mes_query = DetalleFactura.objects.filter(
             factura__fecha__month=hoy.month,
             factura__fecha__year=hoy.year
         ).aggregate(
@@ -214,10 +203,10 @@ class ReporteVentasView(APIView):
             conteo=Count('factura', distinct=True)
         )
         
-        ventas_mes = float(ventas_mes_query['total'] or 0)
-        conteo_facturas = ventas_mes_query['conteo'] or 0
+        ventas_mes = float(v_mes_query['total'] or 0)
+        conteo_facturas = v_mes_query['conteo'] or 0
 
-        # Tendencia para las gráficas
+        # Tendencia (Últimos 28 días) para gráficas
         hace_28_dias = hoy - timedelta(days=27)
         reporte_db = (
             DetalleFactura.objects
@@ -233,29 +222,48 @@ class ReporteVentasView(APIView):
         ]
 
         return Response({
-            "totales": { # Llave esperada por Reportes.jsx
+            "totales": {
                 "hoy": float(ventas_hoy),
                 "mes": ventas_mes,
                 "utilidad": ventas_mes * 0.40
             },
-            "ventas_mes": ventas_mes, # Llave para ReporteMensual.jsx
+            "ventas_mes": ventas_mes,
+            "utilidad_mes": ventas_mes * 0.40,
             "conteo_facturas_mes": conteo_facturas,
             "ticket_promedio_mes": ventas_mes / conteo_facturas if conteo_facturas > 0 else 0,
-            "tendencia_semanal": tendencia # Para GraficasReporte.jsx
+            "tendencia_semanal": tendencia,
+            "moneda": "COP"
         })
-        
+
 class ReporteUtilidadView(APIView):
-    permission_classes = [IsAdminUser]
+    """
+    Vista optimizada para AnalisisDetallado.jsx y SelectorUtilidadPeriodo.jsx
+    """
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
         hoy = timezone.localdate()
-        def calcular_datos(queryset):
-            res = queryset.aggregate(total=Sum(F('cantidad') * F('precio_unitario')), conteo=Count('factura', distinct=True))
-            v = res['total'] or 0
+        inicio_semana = hoy - timedelta(days=hoy.weekday()) # Lunes de esta semana
+
+        def calcular_metrica(queryset):
+            res = queryset.aggregate(
+                total=Sum(F('cantidad') * F('precio_unitario')), 
+                conteo=Count('factura', distinct=True)
+            )
+            v = float(res['total'] or 0)
             c = res['conteo'] or 0
-            return {"ventas": float(v), "utilidad": float(v) * 0.40, "ticket_promedio": float(v/c) if c > 0 else 0}
+            return {
+                "ventas": v, 
+                "utilidad": v * 0.40, 
+                "ticket_promedio": v / c if c > 0 else 0
+            }
 
         return Response({
-            "diario": calcular_datos(DetalleFactura.objects.filter(factura__fecha=hoy)),
-            "mensual": calcular_datos(DetalleFactura.objects.filter(factura__fecha__month=hoy.month)),
+            "diario": calcular_metrica(DetalleFactura.objects.filter(factura__fecha=hoy)),
+            "semanal": calcular_metrica(DetalleFactura.objects.filter(factura__fecha__range=[inicio_semana, hoy])),
+            "mensual": calcular_metrica(DetalleFactura.objects.filter(
+                factura__fecha__month=hoy.month, 
+                factura__fecha__year=hoy.year
+            )),
             "moneda": "COP"
         })
