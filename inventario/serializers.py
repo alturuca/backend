@@ -103,7 +103,7 @@ class IngresoProductoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = IngresoProducto
-        fields = ['id','fecha', 'proveedor', 'detalles']
+        fields = ['id','fecha', 'proveedor', 'usuario', 'detalles']
         read_only_fields = ['fecha']
 
     def create(self, validated_data):
